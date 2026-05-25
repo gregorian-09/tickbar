@@ -1,4 +1,7 @@
+use memmap2::Mmap;
 use smol_str::SmolStr;
+use std::fs::File;
+use std::path::Path;
 
 /// Packed representation of a single market data tick — 32 bytes.
 #[repr(C)]
@@ -16,9 +19,6 @@ pub struct Tick {
 
 impl Tick {
     /// Create a `Tick` from trade data with f64 values.
-    ///
-    /// Prices and volumes are converted to i64 fixed-point at the
-    /// scale determined by the aggregator configuration.
     pub fn from_trade(timestamp: i64, price: f64, volume: f64) -> Self {
         Tick {
             timestamp_nanos: timestamp,
@@ -143,5 +143,91 @@ impl TickBuffer {
     pub fn with_duplicate_policy(mut self, policy: DuplicatePolicy) -> Self {
         self.duplicate_policy = policy;
         self
+    }
+}
+
+/// Iterator over `Tick` values from a memory-mapped file.
+///
+/// Expects the file to contain consecutive 32-byte binary `Tick` records.
+pub struct MmapTickReader {
+    mmap: Mmap,
+    cursor: usize,
+}
+
+impl MmapTickReader {
+    /// Open and memory-map a file for tick reading.
+    pub fn open(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        let file = File::open(path.as_ref())?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        Ok(MmapTickReader { mmap, cursor: 0 })
+    }
+
+    /// Return the number of remaining ticks.
+    pub fn remaining(&self) -> usize {
+        let remaining_bytes = self.mmap.len().saturating_sub(self.cursor);
+        remaining_bytes / 32
+    }
+}
+
+impl Iterator for MmapTickReader {
+    type Item = Tick;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cursor + 32 > self.mmap.len() {
+            return None;
+        }
+        let tick = unsafe { std::ptr::read(self.mmap[self.cursor..].as_ptr() as *const Tick) };
+        self.cursor += 32;
+        Some(tick)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tick_from_trade() {
+        let t = Tick::from_trade(1_000_000, 100.5, 500.0);
+        assert_eq!(t.timestamp_nanos, 1_000_000);
+        assert_eq!(t.price, 100);
+        assert_eq!(t.volume, 500);
+    }
+
+    #[test]
+    fn test_tick_from_quote() {
+        let t = Tick::from_quote(1_000_000, 100.0, 101.0, 1000.0, 500.0);
+        assert_eq!(t.timestamp_nanos, 1_000_000);
+        assert_eq!(t.price, 100);
+        assert_eq!(t.flags, 1);
+    }
+
+    #[test]
+    fn test_tick_buffer_push_ordered() {
+        let mut buf = TickBuffer::new("AAPL");
+        buf.push(Tick::from_trade(0, 100.0, 1000.0)).unwrap();
+        buf.push(Tick::from_trade(1_000_000_000, 101.0, 500.0))
+            .unwrap();
+        assert_eq!(buf.as_slice().len(), 2);
+    }
+
+    #[test]
+    fn test_tick_buffer_out_of_order_rejected() {
+        let mut buf = TickBuffer::new("AAPL");
+        buf.push(Tick::from_trade(1_000_000_000, 100.0, 1000.0))
+            .unwrap();
+        let err = buf.push(Tick::from_trade(0, 101.0, 500.0));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_tick_buffer_allow_unordered() {
+        let mut buf = TickBuffer::new("AAPL").with_allow_unordered(true);
+        buf.push(Tick::from_trade(1_000_000_000, 100.0, 1000.0))
+            .unwrap();
+        buf.push(Tick::from_trade(0, 101.0, 500.0)).unwrap();
+        // Should now be sorted: [ts=0, ts=1_000_000_000]
+        assert_eq!(buf.as_slice()[0].timestamp_nanos, 0);
+        assert_eq!(buf.as_slice()[1].timestamp_nanos, 1_000_000_000);
     }
 }

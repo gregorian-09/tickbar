@@ -1,6 +1,7 @@
 use crate::alignment::TimeAlignment;
 use crate::bar::{Bar, BarBuilder, BarSeries};
 use crate::tick::Tick;
+use std::collections::HashMap;
 use std::time::Duration;
 
 /// Configuration for batch processing.
@@ -24,7 +25,7 @@ pub struct AggregatorConfig {
 pub struct BarAggregator {
     current_bar: BarBuilder,
     completed_bars: Vec<Bar>,
-    interval_nanos: i64,
+    pub(crate) interval_nanos: i64,
     _alignment: TimeAlignment,
     _price_scale: u8,
     _volume_scale: u8,
@@ -62,8 +63,7 @@ impl BarAggregator {
     pub fn ingest_ticks(&mut self, ticks: &[Tick]) {
         for tick in ticks {
             if tick.timestamp_nanos < self.current_bar.end_time {
-                self.current_bar
-                    .update(tick.price, tick.volume);
+                self.current_bar.update(tick.price, tick.volume);
                 continue;
             }
             self.finalize_current_bar();
@@ -73,25 +73,14 @@ impl BarAggregator {
                 }
                 self.advance_bar_window();
             }
-            self.current_bar
-                .update(tick.price, tick.volume);
+            self.current_bar.update(tick.price, tick.volume);
         }
     }
 
     fn finalize_current_bar(&mut self) {
         if !self.current_bar.is_empty() {
             let bar = self.current_bar.build();
-            let adjusted = Bar {
-                timestamp_nanos: bar.timestamp_nanos,
-                open: bar.open,
-                high: bar.high,
-                low: bar.low,
-                close: bar.close,
-                volume: bar.volume,
-                tick_count: bar.tick_count,
-                vwap: bar.vwap,
-            };
-            self.completed_bars.push(adjusted);
+            self.completed_bars.push(bar);
         }
     }
 
@@ -142,7 +131,7 @@ impl BarAggregator {
 
 /// Public-facing aggregator with a builder pattern.
 pub struct TickAggregator {
-    aggregator: BarAggregator,
+    pub(crate) aggregator: BarAggregator,
     symbol: String,
 }
 
@@ -176,14 +165,13 @@ impl TickAggregator {
 
     /// Finalize and return all bars as a `BarSeries`.
     pub fn finalize(self) -> BarSeries {
-        let series = self.aggregator.finalize();
-        let bars = series.into_inner();
-        let interval = bars.first().map_or(0, |_| 0);
-        let mut final_series = BarSeries::new(&self.symbol, interval);
+        let interval = self.aggregator.interval_nanos;
+        let bars = self.aggregator.finalize().into_inner();
+        let mut series = BarSeries::new(&self.symbol, interval);
         for bar in bars {
-            final_series.push(bar);
+            series.push(bar);
         }
-        final_series
+        series
     }
 
     /// Process a batch of ticks with the given config and return bars.
@@ -204,8 +192,13 @@ impl TickAggregator {
         );
         agg.ingest_ticks(ticks);
 
+        // Finalize any in-progress bar
+        if !agg.current_bar.is_empty() {
+            agg.completed_bars.push(agg.current_bar.build());
+        }
+
         let mut series = BarSeries::new(symbol, config.interval_nanos);
-        for bar in agg.drain_completed() {
+        for bar in agg.completed_bars {
             series.push(bar);
         }
         Ok(series)
@@ -283,5 +276,257 @@ impl TickAggregatorBuilder {
             aggregator,
             symbol: self.symbol,
         })
+    }
+}
+
+/// Aggregate ticks for multiple symbols in parallel.
+///
+/// Each symbol's ticks are processed independently on separate rayon threads.
+/// Returns a map from symbol name to its `BarSeries`.
+pub fn aggregate_parallel(
+    ticks_by_symbol: HashMap<String, Vec<Tick>>,
+    config: AggregatorConfig,
+) -> HashMap<String, crate::Result<BarSeries>> {
+    use rayon::prelude::*;
+
+    ticks_by_symbol
+        .into_par_iter()
+        .map(|(symbol, ticks)| {
+            let result = TickAggregator::process_batch(&ticks, config.clone(), &symbol);
+            (symbol, result)
+        })
+        .collect()
+}
+
+/// A simple trading calendar that defines valid trading sessions.
+#[derive(Clone, Debug)]
+pub struct TradingCalendar {
+    /// Ordered list of (start_nanos, end_nanos) trading sessions.
+    sessions: Vec<(i64, i64)>,
+}
+
+impl TradingCalendar {
+    /// Create a new `TradingCalendar` from a sorted list of sessions.
+    pub fn new(sessions: Vec<(i64, i64)>) -> Self {
+        TradingCalendar { sessions }
+    }
+
+    /// Returns `true` if the given timestamp falls within a trading session.
+    pub fn is_trading_time(&self, timestamp_nanos: i64) -> bool {
+        self.sessions
+            .binary_search_by(|&(start, end)| {
+                if timestamp_nanos < start {
+                    std::cmp::Ordering::Greater
+                } else if timestamp_nanos >= end {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
+            .is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bar_aggregator_simple() {
+        let ticks = vec![
+            Tick {
+                timestamp_nanos: 0,
+                price: 100,
+                volume: 1000,
+                flags: 0,
+            },
+            Tick {
+                timestamp_nanos: 30_000_000_000,
+                price: 110,
+                volume: 500,
+                flags: 0,
+            },
+        ];
+        let mut agg = BarAggregator::new(
+            60_000_000_000,
+            TimeAlignment::UTC,
+            8,
+            0,
+            false,
+            false,
+            0,
+        );
+        agg.ingest_ticks(&ticks);
+        let series = agg.finalize();
+        assert_eq!(series.as_slice().len(), 1);
+        let bar = series.as_slice()[0];
+        assert_eq!(bar.open, 100);
+        assert_eq!(bar.close, 110);
+        assert_eq!(bar.high, 110);
+        assert_eq!(bar.low, 100);
+        assert_eq!(bar.volume, 1500);
+    }
+
+    #[test]
+    fn test_bar_aggregator_multiple_bars() {
+        let ticks = vec![
+            Tick {
+                timestamp_nanos: 0,
+                price: 100,
+                volume: 1000,
+                flags: 0,
+            },
+            Tick {
+                timestamp_nanos: 61_000_000_000,
+                price: 200,
+                volume: 500,
+                flags: 0,
+            },
+        ];
+        let mut agg = BarAggregator::new(
+            60_000_000_000,
+            TimeAlignment::UTC,
+            8,
+            0,
+            false,
+            false,
+            0,
+        );
+        agg.ingest_ticks(&ticks);
+        let series = agg.finalize();
+        // Two bars: [0, 60) with tick at 0, and [60, 120) with tick at 61s
+        assert_eq!(series.as_slice().len(), 2);
+        assert_eq!(series.as_slice()[0].close, 100);
+        assert_eq!(series.as_slice()[1].close, 200);
+    }
+
+    #[test]
+    fn test_gap_filling() {
+        let ticks = vec![
+            Tick {
+                timestamp_nanos: 0,
+                price: 100,
+                volume: 1000,
+                flags: 0,
+            },
+            Tick {
+                timestamp_nanos: 180_000_000_000,
+                price: 200,
+                volume: 500,
+                flags: 0,
+            },
+        ];
+        let mut agg = BarAggregator::new(
+            60_000_000_000,
+            TimeAlignment::UTC,
+            8,
+            0,
+            true,
+            false,
+            0,
+        );
+        agg.ingest_ticks(&ticks);
+        let series = agg.finalize();
+        // 0-60s: tick bar, 60-120s: empty, 120-180s: empty, 180-240s: tick bar
+        let bars = series.as_slice();
+        assert_eq!(bars.len(), 4);
+        assert_eq!(bars[0].timestamp_nanos, 0);
+        assert_eq!(bars[0].close, 100);
+        assert_eq!(bars[1].close, 100);
+        assert_eq!(bars[2].close, 100);
+        assert_eq!(bars[3].close, 200);
+    }
+
+    #[test]
+    fn test_tick_aggregator_builder() {
+        let mut agg = TickAggregator::builder()
+            .interval(Duration::from_secs(60))
+            .symbol("AAPL")
+            .build()
+            .unwrap();
+        agg.push_tick(Tick {
+            timestamp_nanos: 0,
+            price: 100,
+            volume: 1000,
+            flags: 0,
+        })
+        .unwrap();
+        let series = agg.finalize();
+        assert_eq!(series.symbol(), "AAPL");
+        assert_eq!(series.as_slice().len(), 1);
+    }
+
+    #[test]
+    fn test_process_batch() {
+        let ticks = vec![
+            Tick {
+                timestamp_nanos: 0,
+                price: 100,
+                volume: 1000,
+                flags: 0,
+            },
+        ];
+        let config = AggregatorConfig {
+            interval_nanos: 60_000_000_000,
+            alignment: TimeAlignment::UTC,
+            fill_gaps: false,
+            forward_fill: false,
+            price_decimals: 8,
+            volume_decimals: 0,
+        };
+        let series = TickAggregator::process_batch(&ticks, config, "AAPL").unwrap();
+        assert_eq!(series.symbol(), "AAPL");
+        assert_eq!(series.as_slice().len(), 1);
+    }
+
+    #[test]
+    fn test_aggregate_parallel() {
+        let mut map = HashMap::new();
+        map.insert(
+            "AAPL".to_string(),
+            vec![Tick {
+                timestamp_nanos: 0,
+                price: 100,
+                volume: 1000,
+                flags: 0,
+            }],
+        );
+        map.insert(
+            "GOOG".to_string(),
+            vec![Tick {
+                timestamp_nanos: 0,
+                price: 200,
+                volume: 2000,
+                flags: 0,
+            }],
+        );
+        let config = AggregatorConfig {
+            interval_nanos: 60_000_000_000,
+            alignment: TimeAlignment::UTC,
+            fill_gaps: false,
+            forward_fill: false,
+            price_decimals: 8,
+            volume_decimals: 0,
+        };
+        let results = aggregate_parallel(map, config);
+        assert_eq!(results.len(), 2);
+        assert!(results.get("AAPL").unwrap().is_ok());
+        assert!(results.get("GOOG").unwrap().is_ok());
+    }
+
+    #[test]
+    fn test_trading_calendar() {
+        let sessions = vec![(0, 86_400_000_000_000)];
+        let cal = TradingCalendar::new(sessions);
+        assert!(cal.is_trading_time(0));
+        assert!(cal.is_trading_time(43_200_000_000_000));
+        assert!(!cal.is_trading_time(86_400_000_000_000));
+        assert!(!cal.is_trading_time(100_000_000_000_000));
+    }
+
+    #[test]
+    fn test_builder_missing_interval() {
+        let result = TickAggregator::builder().build();
+        assert!(result.is_err());
     }
 }

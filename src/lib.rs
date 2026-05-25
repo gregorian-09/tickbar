@@ -34,9 +34,12 @@ pub mod ffi;
 /// Utility modules for fixed-point conversion and time handling.
 pub mod utils;
 
-pub use tick::{Tick, TickBuffer, DuplicatePolicy};
+pub use tick::{Tick, TickBuffer, DuplicatePolicy, MmapTickReader};
 pub use bar::{Bar, BarSeries, BarBuilder};
-pub use aggregator::{BarAggregator, TickAggregator, TickAggregatorBuilder, AggregatorConfig};
+pub use aggregator::{
+    BarAggregator, TickAggregator, TickAggregatorBuilder, AggregatorConfig, TradingCalendar,
+    aggregate_parallel,
+};
 pub use alignment::TimeAlignment;
 pub use adjustments::{AdjustmentEvent, AdjustmentType};
 
