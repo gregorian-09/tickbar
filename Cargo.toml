@@ -1,0 +1,37 @@
+[package]
+name = "tickbar"
+version = "0.1.0"
+edition = "2024"
+description = "High-performance tick-to-bar aggregator for market data"
+license = "MIT"
+repository = "https://github.com/user/tickbar"
+readme = "README.md"
+keywords = ["market-data", "ohlcv", "tick-aggregation", "finance"]
+categories = ["science::finance", "data-structures"]
+
+[dependencies]
+smol_str = "0.3"
+thiserror = "2"
+rayon = "1"
+csv = "1"
+memmap2 = "0.9"
+pyo3 = { version = "0.28", features = ["abi3-py39"], optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
+insta = "1"
+
+[features]
+default = ["python"]
+python = ["dep:pyo3"]
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[package.metadata.docs.rs]
+features = ["python"]
+
+[[bench]]
+name = "aggregation"
+harness = false
