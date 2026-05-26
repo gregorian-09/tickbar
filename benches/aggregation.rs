@@ -28,7 +28,7 @@ fn bench_1m_ticks_to_1min_bars(c: &mut Criterion) {
                 false,
                 ticks.first().map_or(0, |t| t.timestamp_nanos),
             );
-            agg.ingest_ticks(black_box(&ticks));
+            let _ = agg.ingest_ticks(black_box(&ticks));
             agg.finalize()
         });
     });

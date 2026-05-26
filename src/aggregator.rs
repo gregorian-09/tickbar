@@ -31,6 +31,7 @@ pub struct BarAggregator {
     _volume_scale: u8,
     fill_gaps: bool,
     _forward_fill: bool,
+    last_timestamp: Option<i64>,
 }
 
 impl BarAggregator {
@@ -54,26 +55,66 @@ impl BarAggregator {
             _volume_scale: volume_scale,
             fill_gaps,
             _forward_fill: forward_fill,
+            last_timestamp: None,
         }
     }
 
-    /// Ingest a slice of ticks, updating aggregation state.
+    /// Ingest a pre-sorted slice of ticks, skipping ordering validation.
     ///
-    /// Ticks must be sorted by timestamp.
-    pub fn ingest_ticks(&mut self, ticks: &[Tick]) {
+    /// Caller guarantees ticks are monotonically increasing by timestamp.
+    pub fn ingest_ticks_unchecked(&mut self, ticks: &[Tick]) {
         for tick in ticks {
-            if tick.timestamp_nanos < self.current_bar.end_time {
-                self.current_bar.update(tick.price, tick.volume);
-                continue;
-            }
-            self.finalize_current_bar();
-            while tick.timestamp_nanos >= self.current_bar.end_time {
-                if self.current_bar.is_empty() && self.fill_gaps {
-                    self.emit_empty_bar();
-                }
-                self.advance_bar_window();
+            if tick.timestamp_nanos >= self.current_bar.end_time {
+                self.finalize_current_bar();
+                self.advance_to_bar(tick.timestamp_nanos);
             }
             self.current_bar.update(tick.price, tick.volume);
+        }
+    }
+
+    /// Ingest a slice of ticks with ordering validation.
+    ///
+    /// Returns `OutOfOrderTick` if a tick arrives out of sequence.
+    pub fn ingest_ticks(&mut self, ticks: &[Tick]) -> Result<(), crate::Error> {
+        for tick in ticks {
+            if let Some(last) = self.last_timestamp
+                && tick.timestamp_nanos < last
+            {
+                return Err(crate::Error::OutOfOrderTick {
+                    current: tick.timestamp_nanos,
+                    previous: last,
+                });
+            }
+            self.last_timestamp = Some(tick.timestamp_nanos);
+
+            if tick.timestamp_nanos >= self.current_bar.end_time {
+                self.finalize_current_bar();
+                self.advance_to_bar(tick.timestamp_nanos);
+            }
+            self.current_bar.update(tick.price, tick.volume);
+        }
+        Ok(())
+    }
+
+    /// Ingest pre-sorted data from parallel arrays, avoiding `Tick` construction.
+    pub fn ingest_from_arrays(&mut self, timestamps: &[i64], prices: &[i64], volumes: &[i64]) {
+        let n = timestamps.len().min(prices.len()).min(volumes.len());
+        for i in 0..n {
+            let ts = timestamps[i];
+            if ts >= self.current_bar.end_time {
+                self.finalize_current_bar();
+                self.advance_to_bar(ts);
+            }
+            self.current_bar.update(prices[i], volumes[i]);
+        }
+    }
+
+    fn advance_to_bar(&mut self, ts: i64) {
+        while ts >= self.current_bar.end_time {
+            if self.current_bar.is_empty() && self.fill_gaps {
+                self.emit_empty_bar();
+            }
+            self.advance_bar_window();
         }
     }
 
@@ -143,14 +184,12 @@ impl TickAggregator {
 
     /// Push a single tick.
     pub fn push_tick(&mut self, tick: Tick) -> Result<(), crate::Error> {
-        self.aggregator.ingest_ticks(std::slice::from_ref(&tick));
-        Ok(())
+        self.aggregator.ingest_ticks(std::slice::from_ref(&tick))
     }
 
     /// Push a batch of ticks.
     pub fn push_ticks(&mut self, ticks: &[Tick]) -> Result<(), crate::Error> {
-        self.aggregator.ingest_ticks(ticks);
-        Ok(())
+        self.aggregator.ingest_ticks(ticks)
     }
 
     /// Drain completed bars.
@@ -190,7 +229,7 @@ impl TickAggregator {
             config.forward_fill,
             first_ts,
         );
-        agg.ingest_ticks(ticks);
+        agg.ingest_ticks(ticks)?;
 
         // Finalize any in-progress bar
         if !agg.current_bar.is_empty() {
@@ -356,7 +395,7 @@ mod tests {
             false,
             0,
         );
-        agg.ingest_ticks(&ticks);
+        agg.ingest_ticks(&ticks).unwrap();
         let series = agg.finalize();
         assert_eq!(series.as_slice().len(), 1);
         let bar = series.as_slice()[0];
@@ -392,9 +431,8 @@ mod tests {
             false,
             0,
         );
-        agg.ingest_ticks(&ticks);
+        agg.ingest_ticks(&ticks).unwrap();
         let series = agg.finalize();
-        // Two bars: [0, 60) with tick at 0, and [60, 120) with tick at 61s
         assert_eq!(series.as_slice().len(), 2);
         assert_eq!(series.as_slice()[0].close, 100);
         assert_eq!(series.as_slice()[1].close, 200);
@@ -425,9 +463,8 @@ mod tests {
             false,
             0,
         );
-        agg.ingest_ticks(&ticks);
+        agg.ingest_ticks(&ticks).unwrap();
         let series = agg.finalize();
-        // 0-60s: tick bar, 60-120s: empty, 120-180s: empty, 180-240s: tick bar
         let bars = series.as_slice();
         assert_eq!(bars.len(), 4);
         assert_eq!(bars[0].timestamp_nanos, 0);

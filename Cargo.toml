@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "High-performance tick-to-bar aggregator for market data"
 license = "MIT"
-repository = "https://github.com/user/tickbar"
+repository = "https://github.com/anomalyco/tickbar"
 readme = "README.md"
 keywords = ["market-data", "ohlcv", "tick-aggregation", "finance"]
 categories = ["science::finance", "data-structures"]
@@ -15,7 +15,9 @@ thiserror = "2"
 rayon = "1"
 csv = "1"
 memmap2 = "0.9"
-pyo3 = { version = "0.28", features = ["abi3-py39"], optional = true }
+pyo3 = { version = "0.28", features = ["abi3-py311"], optional = true }
+arrow = { version = "58", optional = true, default-features = false, features = ["ipc"] }
+polars = { version = "0.53", optional = true, default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
@@ -25,12 +27,14 @@ insta = "1"
 [features]
 default = ["python"]
 python = ["dep:pyo3"]
+arrow-export = ["dep:arrow"]
+polars-export = ["dep:polars", "arrow-export"]
 
 [lib]
 crate-type = ["lib", "cdylib"]
 
 [package.metadata.docs.rs]
-features = ["python"]
+features = ["python", "arrow-export", "polars-export"]
 
 [[bench]]
 name = "aggregation"

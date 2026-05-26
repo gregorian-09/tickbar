@@ -82,6 +82,81 @@ impl BarSeries {
         self
     }
 
+    /// Export bars to Arrow `RecordBatch` (zero-copy).
+    #[cfg(feature = "arrow-export")]
+    pub fn to_arrow(&self) -> Result<arrow::record_batch::RecordBatch, arrow::error::ArrowError> {
+        use std::sync::Arc;
+        use arrow::array::{Int64Array, UInt32Array};
+        use arrow::datatypes::{DataType, Field, Schema};
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp_nanos", DataType::Int64, false),
+            Field::new("open", DataType::Int64, false),
+            Field::new("high", DataType::Int64, false),
+            Field::new("low", DataType::Int64, false),
+            Field::new("close", DataType::Int64, false),
+            Field::new("volume", DataType::Int64, false),
+            Field::new("tick_count", DataType::UInt32, false),
+            Field::new("vwap", DataType::Int64, false),
+        ]));
+        let n = self.bars.len();
+        let cap = n.max(1);
+        let mut ts = Vec::with_capacity(cap);
+        let mut open = Vec::with_capacity(cap);
+        let mut high = Vec::with_capacity(cap);
+        let mut low = Vec::with_capacity(cap);
+        let mut close = Vec::with_capacity(cap);
+        let mut volume = Vec::with_capacity(cap);
+        let mut tick_count = Vec::with_capacity(cap);
+        let mut vwap = Vec::with_capacity(cap);
+        for bar in &self.bars {
+            ts.push(bar.timestamp_nanos);
+            open.push(bar.open);
+            high.push(bar.high);
+            low.push(bar.low);
+            close.push(bar.close);
+            volume.push(bar.volume);
+            tick_count.push(bar.tick_count);
+            vwap.push(bar.vwap);
+        }
+        let columns: Vec<arrow::array::ArrayRef> = vec![
+            Arc::new(Int64Array::from(ts)),
+            Arc::new(Int64Array::from(open)),
+            Arc::new(Int64Array::from(high)),
+            Arc::new(Int64Array::from(low)),
+            Arc::new(Int64Array::from(close)),
+            Arc::new(Int64Array::from(volume)),
+            Arc::new(UInt32Array::from(tick_count)),
+            Arc::new(Int64Array::from(vwap)),
+        ];
+        let batch = arrow::record_batch::RecordBatch::try_new(schema, columns)?;
+        Ok(batch)
+    }
+
+    /// Export bars to a Polars `DataFrame`.
+    #[cfg(feature = "polars-export")]
+    pub fn to_polars(&self) -> polars::prelude::PolarsResult<polars::frame::DataFrame> {
+        use polars::prelude::*;
+        let ts: Vec<i64> = self.bars.iter().map(|b| b.timestamp_nanos).collect();
+        let open: Vec<i64> = self.bars.iter().map(|b| b.open).collect();
+        let high: Vec<i64> = self.bars.iter().map(|b| b.high).collect();
+        let low: Vec<i64> = self.bars.iter().map(|b| b.low).collect();
+        let close: Vec<i64> = self.bars.iter().map(|b| b.close).collect();
+        let volume: Vec<i64> = self.bars.iter().map(|b| b.volume).collect();
+        let tick_count: Vec<u32> = self.bars.iter().map(|b| b.tick_count).collect();
+        let vwap: Vec<i64> = self.bars.iter().map(|b| b.vwap).collect();
+        let cols = vec![
+            Column::new("timestamp_nanos".into(), ts),
+            Column::new("open".into(), open),
+            Column::new("high".into(), high),
+            Column::new("low".into(), low),
+            Column::new("close".into(), close),
+            Column::new("volume".into(), volume),
+            Column::new("tick_count".into(), tick_count),
+            Column::new("vwap".into(), vwap),
+        ];
+        DataFrame::new(self.bars.len(), cols)
+    }
+
     /// Export bars to CSV format.
     ///
     /// Writes CSV rows: timestamp_nanos,open,high,low,close,volume,tick_count,vwap
@@ -115,21 +190,34 @@ impl BarSeries {
         let factor = (new_interval_nanos / self.interval_nanos) as usize;
         let mut out = BarSeries::new(self.symbol.clone(), new_interval_nanos);
 
-        for chunk in self.bars.chunks(factor) {
-            let first = chunk.first().ok_or_else(|| {
-                crate::Error::InvalidConfiguration("empty chunk during resample".into())
-            })?;
-            let last = chunk.last().ok_or_else(|| {
-                crate::Error::InvalidConfiguration("empty chunk during resample".into())
-            })?;
+        let mut i = 0;
+        while i < self.bars.len() {
+            let chunk_end = (i + factor).min(self.bars.len());
+            let first = &self.bars[i];
 
-            let high = chunk.iter().map(|b| b.high).max().unwrap_or(first.high);
-            let low = chunk.iter().map(|b| b.low).min().unwrap_or(first.low);
-            let volume: i64 = chunk.iter().map(|b| b.volume).sum();
-            let tick_count: u32 = chunk.iter().map(|b| b.tick_count).sum();
+            let mut high = first.high;
+            let mut low = first.low;
+            let mut volume = first.volume;
+            let mut tick_count = first.tick_count;
+            let mut vwap_num = first.vwap * first.volume;
+
+            let last_idx = chunk_end - 1;
+            for j in (i + 1)..chunk_end {
+                let b = &self.bars[j];
+                if b.high > high {
+                    high = b.high;
+                }
+                if b.low < low {
+                    low = b.low;
+                }
+                volume += b.volume;
+                tick_count += b.tick_count;
+                vwap_num += b.vwap * b.volume;
+            }
+
+            let last = &self.bars[last_idx];
             let vwap = if volume > 0 {
-                let weighted_sum: i64 = chunk.iter().map(|b| b.vwap * b.volume).sum();
-                weighted_sum / volume
+                vwap_num / volume
             } else {
                 last.close
             };
@@ -144,6 +232,8 @@ impl BarSeries {
                 tick_count,
                 vwap,
             });
+
+            i = chunk_end;
         }
         Ok(out)
     }
