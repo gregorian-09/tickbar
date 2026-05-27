@@ -197,6 +197,67 @@
 //! bars = agg.finalize()
 //! ```
 //!
+//! # Memory-mapped file reader
+//!
+//! Read packed `Tick` binary files via `mmap`:
+//!
+//! ```rust
+//! use tickbar::{MmapTickReader, BarAggregator, TimeAlignment};
+//!
+//! // Assuming /tmp/ticks.bin exists with packed 32-byte Tick records
+//! if let Ok(reader) = MmapTickReader::open("/tmp/ticks.bin") {
+//!     let ticks: Vec<_> = reader.collect();
+//!     let mut agg = BarAggregator::new(
+//!         60_000_000_000, TimeAlignment::UTC, 8, 0,
+//!         false, false,
+//!         ticks.first().map(|t| t.timestamp_nanos).unwrap_or(0),
+//!     );
+//!     agg.ingest_ticks_unchecked(&ticks);
+//!     let bars = agg.finalize();
+//!     println!("{} bars from mmap", bars.as_slice().len());
+//! }
+//! ```
+//!
+//! # CSV export
+//!
+//! Write bars to CSV format:
+//!
+//! ```rust
+//! use tickbar::{BarSeries, Bar};
+//!
+//! let mut series = BarSeries::new("AAPL", 60_000_000_000);
+//! series.push(Bar {
+//!     timestamp_nanos: 0, open: 10000, high: 10100, low: 9900,
+//!     close: 10050, volume: 100000, tick_count: 10, vwap: 10020,
+//! });
+//!
+//! let mut buf = Vec::new();
+//! let mut wtr = csv::Writer::from_writer(&mut buf);
+//! series.to_csv(&mut wtr)?;
+//! drop(wtr);
+//! let output = String::from_utf8(buf)?;
+//! assert!(output.contains("10000"));  // open price in CSV
+//! # Ok::<_, Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! # Trading calendar
+//!
+//! Filter ticks outside of trading hours:
+//!
+//! ```rust
+//! use tickbar::{TradingCalendar, Tick};
+//!
+//! let cal = TradingCalendar::new(vec![
+//!     (9 * 3_600_000_000_000, 16 * 3_600_000_000_000),  // 9:00-16:00 UTC
+//! ]);
+//!
+//! let tick = Tick::from_trade(10 * 3_600_000_000_000, 100.0, 1000.0); // 10:00 UTC
+//! assert!(cal.is_trading_time(tick.timestamp_nanos));
+//!
+//! let tick = Tick::from_trade(20 * 3_600_000_000_000, 100.0, 1000.0); // 20:00 UTC
+//! assert!(!cal.is_trading_time(tick.timestamp_nanos));
+//! ```
+//!
 //! # Performance
 //!
 //! | Path | Throughput | vs pandas |

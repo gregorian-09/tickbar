@@ -107,6 +107,72 @@ agg.push_from_bytes(data)
 bars = agg.finalize()
 ```
 
+### Gap filling
+
+Enable gap filling to produce empty bars for periods with no activity.
+Each gap-filled bar carries the previous bar's close price as open/high/low/close
+and zero volume:
+
+```python
+from tickbar import TickAggregator, Tick
+
+# Gap filling is configured via TickAggregator.builder()
+# (requires building from Rust with fill_gaps=True)
+```
+
+### Error handling
+
+If you push out-of-order ticks (older timestamp than the previous tick),
+`push_tick` and `push_ticks` raise a `ValueError`:
+
+```python
+agg = TickAggregator(interval_secs=60)
+agg.push_tick(Tick(100, 100.0, 1000.0))   # ts=100
+agg.push_tick(Tick(50, 99.0, 500.0))      # ts=50 — ValueError!
+```
+
+The zero-copy methods (`push_from_buffer`, `push_from_numpy`, `push_from_bytes`)
+skip ordering validation for maximum throughput. Ensure your data is pre-sorted
+by timestamp before using them.
+
+### Fixed-point scale
+
+Prices and volumes use fixed-point `int64` values. Typical scales:
+
+| Asset | Price scale | Example |
+|-------|-------------|---------|
+| Stocks | 8 decimals (`100_000_000`) | `$100.50 → 10_050_000_000` |
+| Crypto | 8+ decimals | `$0.00123 → 123_000` |
+| FX | 5-6 decimals | `1.12345 → 112_345_000` |
+
+The `push_from_arrays`, `push_from_numpy`, `push_from_buffer`, and
+`push_from_bytes` methods all work directly with these int64 values.
+
+### `push_from_bytes` format
+
+The bytes must contain tightly packed `Tick` structs (32 bytes each):
+
+| Offset | Type | Field |
+|--------|------|-------|
+| 0 | `i64` | `timestamp_nanos` |
+| 8 | `i64` | `price` (fixed-point) |
+| 16 | `i64` | `volume` (fixed-point) |
+| 24 | `u64` | `flags` (0=trade, 1=quote) |
+
+```python
+import struct
+import numpy as np
+
+# Build 3 ticks manually
+data = b"".join(
+    struct.pack("<qqqQ", ts, price, vol, 0)
+    for ts, price, vol in [(0, 100_000_000_00, 1000), (1_000_000_000, 100_500_000_00, 500)]
+)
+agg = TickAggregator(60)
+agg.push_from_bytes(data)
+bars = agg.finalize()
+```
+
 #### Push method comparison
 
 | Method | Zero-copy? | ticks/s | When to use |
