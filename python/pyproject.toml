@@ -5,11 +5,12 @@ build-backend = "maturin"
 [project]
 name = "tickbar"
 version = "0.1.0"
-description = "High-performance tick-to-bar aggregator — 6.6M ticks/s, 1.4× pandas"
-readme = "python/README.md"
-requires-python = ">=3.9"
+description = "High-performance tick-to-bar aggregator — 6.7M ticks/s, 1.4× pandas"
+readme = "README.md"
+requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "tickbar contributors" }]
 
 [tool.maturin]
 features = ["python"]
+manifest-path = "../Cargo.toml"
