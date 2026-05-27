@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "High-performance tick-to-bar aggregator for market data"
 license = "MIT"
-repository = "https://github.com/anomalyco/tickbar"
+repository = "https://github.com/gregorian-09/tickbar"
 readme = "README.md"
 keywords = ["market-data", "ohlcv", "tick-aggregation", "finance"]
-categories = ["science::finance", "data-structures"]
+categories = ["data-structures"]
 
 [dependencies]
 smol_str = "0.3"

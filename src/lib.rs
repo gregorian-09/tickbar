@@ -288,8 +288,8 @@
 //!
 //! # Support
 //!
-//! - Issues: <https://github.com/anomalyco/tickbar/issues>
-//! - Repository: <https://github.com/anomalyco/tickbar>
+//! - Issues: <https://github.com/gregorian-09/tickbar/issues>
+//! - Repository: <https://github.com/gregorian-09/tickbar>
 //! - Crates.io: <https://crates.io/crates/tickbar>
 //! - PyPI: <https://pypi.org/project/tickbar/>
 

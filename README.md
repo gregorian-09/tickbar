@@ -66,7 +66,7 @@ bars = agg.finalize()
 ## Documentation
 
 - [Rust API docs (docs.rs)](https://docs.rs/tickbar) — full module reference with runnable examples
-- [GitHub repository](https://github.com/anomalyco/tickbar) — source, issues, contributing
+- [GitHub repository](https://github.com/gregorian-09/tickbar) — source, issues, contributing
 
 ### Installation
 
