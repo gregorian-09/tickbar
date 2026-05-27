@@ -85,5 +85,5 @@ MIT
 
 [crates-badge]: https://img.shields.io/crates/v/tickbar.svg
 [crates-url]: https://crates.io/crates/tickbar
-[pypi-badge]: https://img.shields.io/pypi/v/tickbar.svg
+[pypi-badge]: https://img.shields.io/pypi/v/tickbar.svg?refresh=1
 [pypi-url]: https://pypi.org/project/tickbar/
