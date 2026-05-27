@@ -1,2 +1,4 @@
 .internal/
 target/
+.venv/
+.idea/
