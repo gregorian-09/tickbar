@@ -6,7 +6,7 @@ build-backend = "maturin"
 name = "tickbar"
 version = "0.1.0"
 description = "High-performance tick-to-bar aggregator — 6.6M ticks/s, 1.4× pandas"
-readme = "README.md"
+readme = "python/README.md"
 requires-python = ">=3.9"
 license = "MIT"
 authors = [{ name = "tickbar contributors" }]
