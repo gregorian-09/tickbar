@@ -386,15 +386,7 @@ mod tests {
                 flags: 0,
             },
         ];
-        let mut agg = BarAggregator::new(
-            60_000_000_000,
-            TimeAlignment::UTC,
-            8,
-            0,
-            false,
-            false,
-            0,
-        );
+        let mut agg = BarAggregator::new(60_000_000_000, TimeAlignment::UTC, 8, 0, false, false, 0);
         agg.ingest_ticks(&ticks).unwrap();
         let series = agg.finalize();
         assert_eq!(series.as_slice().len(), 1);
@@ -422,15 +414,7 @@ mod tests {
                 flags: 0,
             },
         ];
-        let mut agg = BarAggregator::new(
-            60_000_000_000,
-            TimeAlignment::UTC,
-            8,
-            0,
-            false,
-            false,
-            0,
-        );
+        let mut agg = BarAggregator::new(60_000_000_000, TimeAlignment::UTC, 8, 0, false, false, 0);
         agg.ingest_ticks(&ticks).unwrap();
         let series = agg.finalize();
         assert_eq!(series.as_slice().len(), 2);
@@ -454,15 +438,7 @@ mod tests {
                 flags: 0,
             },
         ];
-        let mut agg = BarAggregator::new(
-            60_000_000_000,
-            TimeAlignment::UTC,
-            8,
-            0,
-            true,
-            false,
-            0,
-        );
+        let mut agg = BarAggregator::new(60_000_000_000, TimeAlignment::UTC, 8, 0, true, false, 0);
         agg.ingest_ticks(&ticks).unwrap();
         let series = agg.finalize();
         let bars = series.as_slice();
@@ -495,14 +471,12 @@ mod tests {
 
     #[test]
     fn test_process_batch() {
-        let ticks = vec![
-            Tick {
-                timestamp_nanos: 0,
-                price: 100,
-                volume: 1000,
-                flags: 0,
-            },
-        ];
+        let ticks = vec![Tick {
+            timestamp_nanos: 0,
+            price: 100,
+            volume: 1000,
+            flags: 0,
+        }];
         let config = AggregatorConfig {
             interval_nanos: 60_000_000_000,
             alignment: TimeAlignment::UTC,

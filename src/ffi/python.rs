@@ -1,6 +1,6 @@
+use crate::aggregator::TickAggregator as RustTickAggregator;
 use crate::bar::BarSeries as RustBarSeries;
 use crate::tick::Tick as RustTick;
-use crate::aggregator::TickAggregator as RustTickAggregator;
 use pyo3::buffer::PyBuffer;
 use pyo3::prelude::*;
 
@@ -21,8 +21,10 @@ impl PyTick {
     }
 
     fn __repr__(&self) -> String {
-        format!("Tick(ts={}, price={}, volume={})",
-            self.inner.timestamp_nanos, self.inner.price, self.inner.volume)
+        format!(
+            "Tick(ts={}, price={}, volume={})",
+            self.inner.timestamp_nanos, self.inner.price, self.inner.volume
+        )
     }
 }
 
@@ -105,16 +107,14 @@ impl PyTickAggregator {
     /// Push ticks from raw `bytes` containing packed Tick structs (32 bytes each).
     /// Uses the unchecked (no ordering validation) ingest for maximum speed.
     fn push_from_bytes(&mut self, data: &[u8]) -> PyResult<()> {
-        let agg = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("aggregator already finalized"))?;
+        let agg = self.inner.as_mut().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("aggregator already finalized")
+        })?;
 
         let tick_size = std::mem::size_of::<RustTick>();
         let n = data.len() / tick_size;
-        let ticks: &[RustTick] = unsafe {
-            std::slice::from_raw_parts(data.as_ptr() as *const RustTick, n)
-        };
+        let ticks: &[RustTick] =
+            unsafe { std::slice::from_raw_parts(data.as_ptr() as *const RustTick, n) };
         agg.aggregator.ingest_ticks_unchecked(ticks);
         Ok(())
     }
@@ -126,11 +126,11 @@ impl PyTickAggregator {
         prices: Vec<i64>,
         volumes: Vec<i64>,
     ) -> PyResult<()> {
-        let agg = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("aggregator already finalized"))?;
-        agg.aggregator.ingest_from_arrays(&timestamps, &prices, &volumes);
+        let agg = self.inner.as_mut().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("aggregator already finalized")
+        })?;
+        agg.aggregator
+            .ingest_from_arrays(&timestamps, &prices, &volumes);
         Ok(())
     }
 
@@ -142,10 +142,9 @@ impl PyTickAggregator {
         prices: Bound<'_, PyAny>,
         volumes: Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let agg = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("aggregator already finalized"))?;
+        let agg = self.inner.as_mut().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("aggregator already finalized")
+        })?;
 
         fn array_ptr(obj: &Bound<'_, PyAny>) -> PyResult<*const i64> {
             let iface = obj.getattr("__array_interface__")?;
@@ -169,7 +168,8 @@ impl PyTickAggregator {
         let prices = unsafe { std::slice::from_raw_parts(pr_ptr, n) };
         let volumes = unsafe { std::slice::from_raw_parts(vo_ptr, n) };
 
-        agg.aggregator.ingest_from_arrays(timestamps, prices, volumes);
+        agg.aggregator
+            .ingest_from_arrays(timestamps, prices, volumes);
         Ok(())
     }
 
@@ -183,22 +183,21 @@ impl PyTickAggregator {
         prices: PyBuffer<i64>,
         volumes: PyBuffer<i64>,
     ) -> PyResult<()> {
-        let agg = self
-            .inner
-            .as_mut()
-            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("aggregator already finalized"))?;
+        let agg = self.inner.as_mut().ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("aggregator already finalized")
+        })?;
 
-        let n = timestamps.item_count().min(prices.item_count()).min(volumes.item_count());
+        let n = timestamps
+            .item_count()
+            .min(prices.item_count())
+            .min(volumes.item_count());
 
         // Safety: ReadOnlyCell<i64> is #[repr(transparent)] over UnsafeCell<i64>
         // which is #[repr(transparent)] over i64 – same layout & alignment.
         // We use buf_ptr() instead of as_slice() so we can truncate to min(n).
-        let ts =
-            unsafe { std::slice::from_raw_parts(timestamps.buf_ptr() as *const i64, n) };
-        let pr =
-            unsafe { std::slice::from_raw_parts(prices.buf_ptr() as *const i64, n) };
-        let vo =
-            unsafe { std::slice::from_raw_parts(volumes.buf_ptr() as *const i64, n) };
+        let ts = unsafe { std::slice::from_raw_parts(timestamps.buf_ptr() as *const i64, n) };
+        let pr = unsafe { std::slice::from_raw_parts(prices.buf_ptr() as *const i64, n) };
+        let vo = unsafe { std::slice::from_raw_parts(volumes.buf_ptr() as *const i64, n) };
 
         agg.aggregator.ingest_from_arrays(ts, pr, vo);
         Ok(())

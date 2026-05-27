@@ -293,11 +293,11 @@
 //! - Crates.io: <https://crates.io/crates/tickbar>
 //! - PyPI: <https://pypi.org/project/tickbar/>
 
-mod tick;
-mod bar;
+mod adjustments;
 mod aggregator;
 mod alignment;
-mod adjustments;
+mod bar;
+mod tick;
 
 #[cfg(feature = "python")]
 /// Foreign function interface bindings.
@@ -305,14 +305,14 @@ pub mod ffi;
 /// Utility modules for fixed-point conversion and time handling.
 pub mod utils;
 
-pub use tick::{Tick, TickBuffer, DuplicatePolicy, MmapTickReader};
-pub use bar::{Bar, BarSeries, BarBuilder};
+pub use adjustments::{AdjustmentEvent, AdjustmentType};
 pub use aggregator::{
-    BarAggregator, TickAggregator, TickAggregatorBuilder, AggregatorConfig, TradingCalendar,
+    AggregatorConfig, BarAggregator, TickAggregator, TickAggregatorBuilder, TradingCalendar,
     aggregate_parallel,
 };
 pub use alignment::TimeAlignment;
-pub use adjustments::{AdjustmentEvent, AdjustmentType};
+pub use bar::{Bar, BarBuilder, BarSeries};
+pub use tick::{DuplicatePolicy, MmapTickReader, Tick, TickBuffer};
 
 use thiserror::Error;
 

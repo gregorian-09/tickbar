@@ -29,7 +29,13 @@ impl Tick {
     }
 
     /// Create a `Tick` from quote data.
-    pub fn from_quote(timestamp: i64, _bid: f64, _ask: f64, _bid_size: f64, _ask_size: f64) -> Self {
+    pub fn from_quote(
+        timestamp: i64,
+        _bid: f64,
+        _ask: f64,
+        _bid_size: f64,
+        _ask_size: f64,
+    ) -> Self {
         Tick {
             timestamp_nanos: timestamp,
             price: ((_bid + _ask) / 2.0) as i64,

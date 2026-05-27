@@ -1,9 +1,7 @@
 use std::time::Duration;
-use tickbar::{
-    aggregate_parallel, BarAggregator, Tick, TickAggregator, TimeAlignment,
-};
 #[cfg(any(feature = "arrow-export", feature = "polars-export"))]
 use tickbar::BarSeries;
+use tickbar::{BarAggregator, Tick, TickAggregator, TimeAlignment, aggregate_parallel};
 
 fn make_tick(ts_nanos: i64, price: i64, volume: i64) -> Tick {
     Tick {
@@ -55,8 +53,12 @@ fn test_tick_aggregator_builder_api() {
         .expect("valid config");
 
     for i in 0..100 {
-        agg.push_tick(make_tick(i as i64 * 1_000_000_000, 100_000_000 + i as i64, 1000))
-            .expect("push should succeed");
+        agg.push_tick(make_tick(
+            i as i64 * 1_000_000_000,
+            100_000_000 + i as i64,
+            1000,
+        ))
+        .expect("push should succeed");
     }
 
     let series = agg.finalize();
@@ -73,15 +75,7 @@ fn test_gap_filling_integration() {
         make_tick(180_000_000_000, 200_000_000, 500),
     ];
 
-    let mut agg = BarAggregator::new(
-        60_000_000_000,
-        TimeAlignment::UTC,
-        8,
-        0,
-        true,
-        false,
-        0,
-    );
+    let mut agg = BarAggregator::new(60_000_000_000, TimeAlignment::UTC, 8, 0, true, false, 0);
     agg.ingest_ticks(&ticks).unwrap();
     let series = agg.finalize();
 
@@ -129,19 +123,13 @@ fn test_resample_bars() {
         ticks.push(make_tick(i as i64 * 1_000_000_000, 100_000_000, 1000));
     }
 
-    let mut agg = BarAggregator::new(
-        60_000_000_000,
-        TimeAlignment::UTC,
-        8,
-        0,
-        false,
-        false,
-        0,
-    );
+    let mut agg = BarAggregator::new(60_000_000_000, TimeAlignment::UTC, 8, 0, false, false, 0);
     agg.ingest_ticks(&ticks).unwrap();
     let series = agg.finalize();
 
-    let five_min = series.resample(300_000_000_000).expect("resample should work");
+    let five_min = series
+        .resample(300_000_000_000)
+        .expect("resample should work");
     assert!(five_min.as_slice().len() < series.as_slice().len());
     assert_eq!(
         five_min.as_slice().len() * 5,
@@ -164,15 +152,7 @@ fn test_out_of_order_rejected() {
 
 #[test]
 fn test_csv_round_trip() {
-    let mut agg = BarAggregator::new(
-        60_000_000_000,
-        TimeAlignment::UTC,
-        8,
-        0,
-        false,
-        false,
-        0,
-    );
+    let mut agg = BarAggregator::new(60_000_000_000, TimeAlignment::UTC, 8, 0, false, false, 0);
     let ticks: Vec<_> = (0..10)
         .map(|i| make_tick(i * 1_000_000_000, 100_000_000 + i * 1000, 1000))
         .collect();
@@ -185,7 +165,10 @@ fn test_csv_round_trip() {
     drop(writer);
 
     let output = String::from_utf8(buf).expect("valid utf8");
-    assert!(output.contains("100000000"), "should contain price data: {output}");
+    assert!(
+        output.contains("100000000"),
+        "should contain price data: {output}"
+    );
     assert!(output.lines().count() > 0);
 }
 

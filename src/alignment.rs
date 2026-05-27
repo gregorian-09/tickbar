@@ -15,9 +15,7 @@ impl TimeAlignment {
                 let nanos_per_day = 86_400_000_000_000;
                 timestamp_nanos - (timestamp_nanos % nanos_per_day)
             }
-            TimeAlignment::Custom(offset_ns) => {
-                timestamp_nanos + offset_ns
-            }
+            TimeAlignment::Custom(offset_ns) => timestamp_nanos + offset_ns,
         }
     }
 }

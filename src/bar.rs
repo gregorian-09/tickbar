@@ -85,9 +85,9 @@ impl BarSeries {
     /// Export bars to Arrow `RecordBatch` (zero-copy).
     #[cfg(feature = "arrow-export")]
     pub fn to_arrow(&self) -> Result<arrow::record_batch::RecordBatch, arrow::error::ArrowError> {
-        use std::sync::Arc;
         use arrow::array::{Int64Array, UInt32Array};
         use arrow::datatypes::{DataType, Field, Schema};
+        use std::sync::Arc;
         let schema = Arc::new(Schema::new(vec![
             Field::new("timestamp_nanos", DataType::Int64, false),
             Field::new("open", DataType::Int64, false),
