@@ -3,9 +3,26 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish-crates:
+        description: Publish to crates.io
+        type: boolean
+        default: true
+      publish-linux:
+        description: Publish Linux wheel to PyPI
+        type: boolean
+        default: true
+      publish-macos:
+        description: Publish macOS wheel to PyPI
+        type: boolean
+        default: true
+      publish-windows:
+        description: Publish Windows wheel to PyPI
+        type: boolean
+        default: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,10 +50,53 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-features
 
+  preflight:
+    name: Preflight
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from Cargo.toml
+        id: cargo-version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Found Cargo.toml version: $VERSION"
+
+      - name: Verify VERSION file
+        run: |
+          CARGO_VER="${{ steps.cargo-version.outputs.version }}"
+          FILE_VER=$(cat VERSION | tr -d ' \n')
+          if [ "$CARGO_VER" != "$FILE_VER" ]; then
+            echo "Mismatch: Cargo.toml ($CARGO_VER) != VERSION ($FILE_VER)"
+            exit 1
+          fi
+          echo "VERSION file matches"
+
+      - name: Verify pyproject.toml version
+        run: |
+          CARGO_VER="${{ steps.cargo-version.outputs.version }}"
+          PY_VER=$(grep '^version = ' python/pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          if [ "$CARGO_VER" != "$PY_VER" ]; then
+            echo "Mismatch: Cargo.toml ($CARGO_VER) != pyproject.toml ($PY_VER)"
+            exit 1
+          fi
+          echo "pyproject.toml version matches"
+
+      - name: Verify CHANGELOG has entry for this version
+        run: |
+          CARGO_VER="${{ steps.cargo-version.outputs.version }}"
+          if ! grep -Eq "## \[$CARGO_VER\]" CHANGELOG.md; then
+            echo "CHANGELOG.md missing entry for version $CARGO_VER"
+            exit 1
+          fi
+          echo "CHANGELOG has entry for $CARGO_VER"
+
   publish-crates:
     name: Publish (crates.io)
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [check, test]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish-crates
+    needs: [check, test, preflight]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,21 +104,22 @@ jobs:
       - run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   publish-pypi:
-    name: Publish (PyPI)
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [check, test]
+    name: Publish (${{ matrix.target }})
+    if: github.event_name == 'workflow_dispatch' && (
+        (contains(matrix.target, 'linux') && inputs.publish-linux) ||
+        (contains(matrix.target, 'darwin') && inputs.publish-macos) ||
+        (contains(matrix.target, 'windows') && inputs.publish-windows)
+      )
+    needs: [check, test, preflight]
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            args: ""
           - os: macos-latest
             target: aarch64-apple-darwin
-            args: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            args: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -69,5 +130,5 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install maturin
-      - run: maturin publish ${{ matrix.args }} --target ${{ matrix.target }} --token ${{ secrets.PYPI_API_TOKEN }}
+      - run: maturin publish --target ${{ matrix.target }} --token ${{ secrets.PYPI_API_TOKEN }}
         working-directory: python
